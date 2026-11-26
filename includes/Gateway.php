@@ -38,8 +38,6 @@ class Gateway extends AbstractPaymentGateway {
 
         add_action('wp_ajax_rpfc_confirm_payment', [$this, 'confirmPayment']);
         add_action('wp_ajax_nopriv_rpfc_confirm_payment', [$this, 'confirmPayment']);
-        add_action('wp_ajax_fluent_cart_razorpay_confirm_payment', [$this, 'confirmPayment']);
-        add_action('wp_ajax_nopriv_fluent_cart_razorpay_confirm_payment', [$this, 'confirmPayment']);
         add_action('wp_ajax_rpfc_payment_status', [$this, 'paymentStatus']);
         add_action('wp_ajax_nopriv_rpfc_payment_status', [$this, 'paymentStatus']);
         add_action('wp_ajax_rpfc_ipn', [$this, 'handleIPN']);
@@ -74,21 +72,24 @@ class Gateway extends AbstractPaymentGateway {
     public function getEnqueueStyleSrc(): array { return []; }
 
     public function getLocalizeData(): array {
+        $upiFile = RPFC_DIR . 'assets/upi.svg';
+        $upiUrl  = RPFC_URL . 'assets/upi.svg' . (file_exists($upiFile) ? '?v=' . filemtime($upiFile) : '');
+
         return [
             'fct_razorpay_data' => [
                 'api_key'       => $this->settings->apiKey(),
                 'checkout_type' => 'modal',
                 'ajax_url'      => admin_url('admin-ajax.php'),
                 'confirm_nonce' => wp_create_nonce('rpfc_confirm'),
+                'upi_icon'      => $upiUrl,
                 'translations'  => [
-                    'Processing payment...'       => __('Processing payment...', 'razorpay-for-fluentcart'),
-                    'Place Order'                 => __('Place Order', 'razorpay-for-fluentcart'),
-                    'Payment Modal is opening...' => __('Opening Razorpay, please complete payment...', 'razorpay-for-fluentcart'),
-                    'Available payment methods'   => __('Available payment methods', 'razorpay-for-fluentcart'),
-                    'Cards'                       => __('Cards', 'razorpay-for-fluentcart'),
-                    'UPI'                         => __('UPI', 'razorpay-for-fluentcart'),
-                    'Net Banking'                 => __('Net Banking', 'razorpay-for-fluentcart'),
-                    'Wallets'                     => __('Wallets', 'razorpay-for-fluentcart'),
+                    'Processing payment...'     => __('Processing payment...', 'razorpay-for-fluentcart'),
+                    'Place Order'               => __('Place Order', 'razorpay-for-fluentcart'),
+                    'Available payment methods' => __('Available payment methods', 'razorpay-for-fluentcart'),
+                    'Cards'                     => __('Cards', 'razorpay-for-fluentcart'),
+                    'UPI'                       => __('UPI', 'razorpay-for-fluentcart'),
+                    'Net Banking'               => __('Net Banking', 'razorpay-for-fluentcart'),
+                    'Wallets'                   => __('Wallets', 'razorpay-for-fluentcart'),
                 ],
             ],
         ];
@@ -162,11 +163,11 @@ class Gateway extends AbstractPaymentGateway {
 
     private function mapPeriod(string $interval): ?array {
         $map = [
-            'daily'     => ['period' => 'daily', 'interval' => 1],
-            'weekly'    => ['period' => 'weekly', 'interval' => 1],
-            'monthly'   => ['period' => 'monthly', 'interval' => 1],
-            'quarterly' => ['period' => 'monthly', 'interval' => 3],
-            'yearly'    => ['period' => 'yearly', 'interval' => 1],
+            'weekly'      => ['period' => 'weekly', 'interval' => 1],
+            'monthly'     => ['period' => 'monthly', 'interval' => 1],
+            'quarterly'   => ['period' => 'monthly', 'interval' => 3],
+            'half_yearly' => ['period' => 'monthly', 'interval' => 6],
+            'yearly'      => ['period' => 'yearly', 'interval' => 1],
         ];
         return $map[strtolower(trim($interval))] ?? null;
     }
@@ -199,7 +200,11 @@ class Gateway extends AbstractPaymentGateway {
 
         $currency        = strtoupper(trim((string)$transaction->currency));
         $recurringAmount = (int)round($subscription->recurring_total);
-        $period          = $this->mapPeriod((string)$subscription->billing_interval);
+        $billingInterval = strtolower(trim((string)$subscription->billing_interval));
+        if ($billingInterval === 'daily') {
+            return ['status' => 'failed', 'message' => __('Razorpay does not support daily subscriptions (minimum billing interval is 7 days). Please use weekly, monthly, quarterly, or yearly.', 'razorpay-for-fluentcart')];
+        }
+        $period = $this->mapPeriod($billingInterval);
         if (strlen($currency) !== 3 || $recurringAmount <= 0 || !$period) {
             return ['status' => 'failed', 'message' => __('Invalid Razorpay subscription configuration.', 'razorpay-for-fluentcart')];
         }
@@ -309,9 +314,14 @@ class Gateway extends AbstractPaymentGateway {
             wp_send_json_error(['message' => __('Security verification failed.', 'razorpay-for-fluentcart')], 403);
         }
 
-        $txid = sanitize_text_field(wp_unslash($_POST['transaction_id'] ?? ($_POST['transaction_hash'] ?? '')));
-        $pid  = sanitize_text_field(wp_unslash($_POST['razorpay_payment_id'] ?? ''));
-        $sig  = sanitize_text_field(wp_unslash($_POST['razorpay_signature'] ?? ''));
+        $txid = '';
+        if (isset($_POST['transaction_id'])) {
+            $txid = sanitize_text_field(wp_unslash($_POST['transaction_id']));
+        } elseif (isset($_POST['transaction_hash'])) {
+            $txid = sanitize_text_field(wp_unslash($_POST['transaction_hash']));
+        }
+        $pid = isset($_POST['razorpay_payment_id']) ? sanitize_text_field(wp_unslash($_POST['razorpay_payment_id'])) : '';
+        $sig = isset($_POST['razorpay_signature']) ? sanitize_text_field(wp_unslash($_POST['razorpay_signature'])) : '';
 
         $tx = $txid ? OrderTransaction::query()->where('uuid', $txid)->first() : null;
         if (!$tx) wp_send_json_error(['message' => __('Transaction not found.', 'razorpay-for-fluentcart')], 404);
@@ -351,6 +361,9 @@ class Gateway extends AbstractPaymentGateway {
         if ((int)($payment['amount'] ?? 0) !== (int)round($tx->total)) {
             wp_send_json_error(['message' => __('Razorpay payment amount mismatch.', 'razorpay-for-fluentcart')], 400);
         }
+        if (!empty($payment['currency']) && strtoupper((string)$payment['currency']) !== strtoupper((string)$tx->currency)) {
+            wp_send_json_error(['message' => __('Razorpay payment currency mismatch.', 'razorpay-for-fluentcart')], 400);
+        }
 
         $this->markSucceeded($tx, $pid, $payment);
         wp_send_json_success(['redirect_url' => $tx->getReceiptPageUrl()]);
@@ -361,7 +374,7 @@ class Gateway extends AbstractPaymentGateway {
             wp_send_json_error(['message' => __('Security verification failed.', 'razorpay-for-fluentcart')], 403);
         }
 
-        $txid = sanitize_text_field(wp_unslash($_POST['transaction_id'] ?? ''));
+        $txid = isset($_POST['transaction_id']) ? sanitize_text_field(wp_unslash($_POST['transaction_id'])) : '';
         $tx   = $txid ? OrderTransaction::query()->where('uuid', $txid)->first() : null;
         if (!$tx) wp_send_json_error(['message' => __('Transaction not found.', 'razorpay-for-fluentcart')], 404);
         if ($tx->status === 'succeeded') wp_send_json_success(['transaction_status' => 'succeeded', 'redirect_url' => $tx->getReceiptPageUrl()]);
@@ -496,7 +509,14 @@ class Gateway extends AbstractPaymentGateway {
 
             if ($event === 'payment.captured' || $event === 'payment.authorized') {
                 if ($event === 'payment.authorized' && $pid) {
-                    $this->api()->capturePayment($pid, (int)round($tx->total), (string)$tx->currency);
+                    $cap = $this->api()->capturePayment($pid, (int)round($tx->total), (string)$tx->currency);
+                    if (is_wp_error($cap)) {
+                        $this->ackWebhook('', 500, 'Failed to capture authorized payment.');
+                    }
+                    $payment = $cap;
+                }
+                if (isset($payment['amount']) && (int)$payment['amount'] !== (int)round($tx->total)) {
+                    $this->ackWebhook($eventKey, 200, 'Ignored: Razorpay payment amount mismatch.');
                 }
                 $this->markSucceeded($tx, $pid, $payment);
                 $this->ackWebhook($eventKey, 200, 'Payment captured and FluentCart order updated.');

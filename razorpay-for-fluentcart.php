@@ -36,7 +36,7 @@ function rpfc_get_gateway(): ?\RazorpayFluentCart\Gateway {
 add_action('init', static function () {
     // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Bootstrap loader only; AJAX handlers verify nonces and IPN verifies HMAC signatures.
     $action = isset($_REQUEST['action']) ? sanitize_key(wp_unslash($_REQUEST['action'])) : '';
-    if (wp_doing_ajax() && in_array($action, ['rpfc_confirm_payment', 'fluent_cart_razorpay_confirm_payment', 'rpfc_payment_status', 'rpfc_ipn'], true)) {
+    if (wp_doing_ajax() && in_array($action, ['rpfc_confirm_payment', 'rpfc_payment_status', 'rpfc_ipn'], true)) {
         rpfc_get_gateway();
         return;
     }

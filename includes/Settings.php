@@ -10,6 +10,7 @@ class Settings extends BaseGatewaySettings {
     public $methodHandler = 'fluent_cart_payment_settings_razorpay';
 
     private array $cachedSecrets = [];
+    private ?string $cachedMode = null;
 
     public static function getDefaults(): array {
         return [
@@ -55,16 +56,17 @@ class Settings extends BaseGatewaySettings {
     }
 
     public function mode(): string {
+        if ($this->cachedMode !== null) return $this->cachedMode;
         if (class_exists('\FluentCart\Api\StoreSettings')) {
             try {
                 $orderMode = (new \FluentCart\Api\StoreSettings())->get('order_mode');
-                if ($orderMode === 'test' || $orderMode === 'live') return $orderMode;
+                if ($orderMode === 'test' || $orderMode === 'live') return $this->cachedMode = $orderMode;
             } catch (\Throwable $e) {}
         }
         $pm = (string)$this->get('payment_mode', '');
-        if ($pm === 'test' || $pm === 'live') return $pm;
+        if ($pm === 'test' || $pm === 'live') return $this->cachedMode = $pm;
         $key = (string)($this->get('live_api_key', '') ?: $this->get('test_api_key', '') ?: $this->get('api_key', ''));
-        return strpos($key, 'rzp_test_') === 0 ? 'test' : 'live';
+        return $this->cachedMode = (strpos($key, 'rzp_test_') === 0 ? 'test' : 'live');
     }
 
     public function getMode(): string { return $this->mode(); }
@@ -108,7 +110,7 @@ class Settings extends BaseGatewaySettings {
     public function getWebhookInstructions(): array {
         return [
             'title'       => __('Webhook URL', 'razorpay-for-fluentcart'),
-            'webhook_url' => esc_url($this->getWebhookUrl()),
+            'webhook_url' => esc_url_raw($this->getWebhookUrl()),
             'description' => __('Configure this webhook URL and secret in your Razorpay Dashboard for real-time payment and subscription status synchronization.', 'razorpay-for-fluentcart'),
             'steps'       => [
                 'title' => __('How to configure?', 'razorpay-for-fluentcart'),
@@ -127,6 +129,16 @@ class Settings extends BaseGatewaySettings {
                     'payment.failed',
                     'refund.processed',
                     'refund.failed',
+                ],
+            ],
+        ];
+    }
+
+    public function getSubscriptionWebhookInstructions(): array {
+        return [
+            'events' => [
+                'title' => __('Subscription Webhook Events', 'razorpay-for-fluentcart'),
+                'list'  => [
                     'subscription.authenticated',
                     'subscription.activated',
                     'subscription.charged',
@@ -174,6 +186,18 @@ class Settings extends BaseGatewaySettings {
             'value' => $this->getWebhookInstructions(),
             'label' => __('Webhook Configuration', 'razorpay-for-fluentcart'),
             'type'  => 'html_attr',
+        ];
+
+        $fields['subscription_webhook_info'] = [
+            'value' => $this->getSubscriptionWebhookInstructions(),
+            'label' => __('Subscription Webhook Events', 'razorpay-for-fluentcart'),
+            'type'  => 'html_attr',
+        ];
+
+        $fields['subscription_webhook_note'] = [
+            'value' => '<p style="margin:0;">' . esc_html__('If you are selling subscriptions, enable these events too.', 'razorpay-for-fluentcart') . '</p>',
+            'label' => __('Subscription Note', 'razorpay-for-fluentcart'),
+            'type'  => 'notice',
         ];
 
         return $fields;

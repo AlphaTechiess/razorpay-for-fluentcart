@@ -27,6 +27,7 @@ class API {
         if ($verb === 'GET' && !empty($body)) $url = add_query_arg($body, $url);
 
         $defaultHeaders = [
+            // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_encode -- HTTP Basic Auth header required by Razorpay REST API.
             'Authorization' => 'Basic ' . base64_encode($key . ':' . $secret),
             'Content-Type'  => 'application/json',
             'Accept'        => 'application/json',
@@ -68,7 +69,6 @@ class API {
     }
 
     public function createOrder(array $data) { return $this->request('POST', '/orders', $data); }
-    public function getOrder(string $id) { return $this->request('GET', '/orders/' . rawurlencode($id)); }
     public function getOrderPayments(string $orderId) { return $this->request('GET', '/orders/' . rawurlencode($orderId) . '/payments'); }
     public function getPayment(string $id) { return $this->request('GET', '/payments/' . rawurlencode($id)); }
     public function capturePayment(string $paymentId, int $amount, string $currency) {
@@ -83,7 +83,6 @@ class API {
     }
     public function createPlan(array $data) { return $this->request('POST', '/plans', $data); }
     public function createSubscription(array $data) { return $this->request('POST', '/subscriptions', $data); }
-    public function getSubscription(string $id) { return $this->request('GET', '/subscriptions/' . rawurlencode($id)); }
     public function cancelSubscription(string $id, bool $cancelAtCycleEnd = false) {
         return $this->request('POST', '/subscriptions/' . rawurlencode($id) . '/cancel', ['cancel_at_cycle_end' => $cancelAtCycleEnd]);
     }
